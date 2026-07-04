@@ -60,14 +60,18 @@ export function createDarwinCapture(): PlatformCapture {
         const { x, y, w, h } = opts.region;
         args = ["-x", "-R", `${x},${y},${w},${h}`, outPath];
       } else {
-        // window
-        const titleKey = opts.titleKeywords[0] ?? "wechat";
-        const wid = await findWindowId(titleKey);
+        // window: 遍历所有关键词，找到任一即用
+        const titleKeys = opts.titleKeywords.length > 0 ? opts.titleKeywords : ["wechat"];
+        let wid = 0;
+        for (const key of titleKeys) {
+          wid = await findWindowId(key);
+          if (wid !== 0) break;
+        }
         if (wid === 0) {
           return {
             ok: false,
             mode: "darwin",
-            error: `no window with title/owner containing "${titleKey}"`,
+            error: `no window with title/owner matching any of: ${titleKeys.join(", ")}`,
             hint: 'Open WeChat devtools, or use scope="full".',
           };
         }

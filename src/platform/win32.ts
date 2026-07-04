@@ -10,8 +10,8 @@ import type { PlatformCapture, CaptureOptions, CaptureResult } from "./types.js"
  * 输出：一行 JSON 到 stdout：{ ok, width?, height?, error?, found? }
  */
 const PS_SCRIPT = `
-param([string]\$Mode, [string]\$Title, [string]\$OutPath, [int]\$X, [int]\$Y, [int]\$W, [int]\$H)
-\$ErrorActionPreference = 'Stop'
+param([string]$Mode, [string]$Title, [string]$OutPath, [int]$X, [int]$Y, [int]$W, [int]$H)
+$ErrorActionPreference = 'Stop'
 Add-Type -AssemblyName System.Drawing,System.Windows.Forms
 Add-Type @"
 using System;
@@ -23,44 +23,46 @@ public class WinApi {
 }
 "@
 
-function Out-Json(\$obj) { Write-Output (\$obj | ConvertTo-Json -Compress) }
+function Out-Json($obj) { Write-Output ($obj | ConvertTo-Json -Compress) }
 
 try {
-  \$rect = \$null
-  if (\$Mode -eq 'full') {
-    \$sb = [System.Windows.Forms.Screen]::PrimaryScreen.Bounds
-    \$rect = New-Object System.Drawing.Rectangle(\$sb.X, \$sb.Y, \$sb.Width, \$sb.Height)
-  } elseif (\$Mode -eq 'region') {
-    \$rect = New-Object System.Drawing.Rectangle(\$X, \$Y, \$W, \$H)
+  $rect = $null
+  if ($Mode -eq 'full') {
+    $sb = [System.Windows.Forms.Screen]::PrimaryScreen.Bounds
+    $rect = New-Object System.Drawing.Rectangle($sb.X, $sb.Y, $sb.Width, $sb.Height)
+  } elseif ($Mode -eq 'region') {
+    $rect = New-Object System.Drawing.Rectangle($X, $Y, $W, $H)
   } else {
-    \$proc = Get-Process -ErrorAction SilentlyContinue |
-      Where-Object { \$_.MainWindowTitle -and \$_.MainWindowTitle.ToLower().Contains(\$Title.ToLower()) } |
+    # $Title may contain multiple keywords separated by |; match any (case-insensitive via regex)
+    $escaped = ($Title.Split('|') | Where-Object { $_ } | ForEach-Object { [regex]::Escape($_) }) -join '|'
+    $proc = Get-Process -ErrorAction SilentlyContinue |
+      Where-Object { $_.MainWindowTitle -and $_.MainWindowTitle -match $escaped } |
       Select-Object -First 1
-    if (-not \$proc -or \$proc.MainWindowHandle -eq [IntPtr]::Zero) {
-      Out-Json @{ ok=\$false; error='WINDOW_NOT_FOUND' }
+    if (-not $proc -or $proc.MainWindowHandle -eq [IntPtr]::Zero) {
+      Out-Json @{ ok=$false; error='WINDOW_NOT_FOUND' }
       exit 0
     }
-    \$r = New-Object WinApi+RECT
-    [void][WinApi]::GetWindowRect(\$proc.MainWindowHandle, [ref]\$r)
-    \$rect = New-Object System.Drawing.Rectangle(\$r.Left, \$r.Top, (\$r.Right - \$r.Left), (\$r.Bottom - \$r.Top))
+    $r = New-Object WinApi+RECT
+    [void][WinApi]::GetWindowRect($proc.MainWindowHandle, [ref]$r)
+    $rect = New-Object System.Drawing.Rectangle($r.Left, $r.Top, ($r.Right - $r.Left), ($r.Bottom - $r.Top))
   }
 
-  if (\$rect.Width -le 0 -or \$rect.Height -le 0) {
-    Out-Json @{ ok=\$false; error='INVALID_RECT'; width=\$rect.Width; height=\$rect.Height }
+  if ($rect.Width -le 0 -or $rect.Height -le 0) {
+    Out-Json @{ ok=$false; error='INVALID_RECT'; width=$rect.Width; height=$rect.Height }
     exit 0
   }
 
-  \$bmp = New-Object System.Drawing.Bitmap(\$rect.Width, \$rect.Height)
-  \$g = [System.Drawing.Graphics]::FromImage(\$bmp)
-  \$g.CopyFromScreen(\$rect.X, \$rect.Y, 0, 0, \$bmp.Size)
-  \$bmp.Save(\$OutPath, [System.Drawing.Imaging.ImageFormat]::Png)
-  \$g.Dispose(); \$bmp.Dispose()
+  $bmp = New-Object System.Drawing.Bitmap($rect.Width, $rect.Height)
+  $g = [System.Drawing.Graphics]::FromImage($bmp)
+  $g.CopyFromScreen($rect.X, $rect.Y, 0, 0, $bmp.Size)
+  $bmp.Save($OutPath, [System.Drawing.Imaging.ImageFormat]::Png)
+  $g.Dispose(); $bmp.Dispose()
 
-  \$warning = \$null
-  if (\$rect.Width -lt 50 -or \$rect.Height -lt 50) { \$warning = 'captured area is very small; window may be minimized or occluded' }
-  Out-Json @{ ok=\$true; width=\$rect.Width; height=\$rect.Height; warning=\$warning }
+  $warning = $null
+  if ($rect.Width -lt 50 -or $rect.Height -lt 50) { $warning = 'captured area is very small; window may be minimized or occluded' }
+  Out-Json @{ ok=$true; width=$rect.Width; height=$rect.Height; warning=$warning }
 } catch {
-  Out-Json @{ ok=\$false; error=\$_.Exception.Message }
+  Out-Json @{ ok=$false; error=$_.Exception.Message }
 }
 `;
 
@@ -89,9 +91,10 @@ export function createWin32Capture(): PlatformCapture {
     mode: "windows",
     async capture(opts: CaptureOptions, outPath: string): Promise<CaptureResult> {
       const scriptPath = join(tmpdir(), `mcp-screenshot-${Date.now()}.ps1`);
-      writeFileSync(scriptPath, PS_SCRIPT, "utf8");
+      // 写 UTF-8 BOM，确保 PowerShell（默认按系统 ANSI 解码）正确识别 UTF-8
+      writeFileSync(scriptPath, "\uFEFF" + PS_SCRIPT, "utf8");
 
-      const title = opts.titleKeywords[0] ?? "微信开发者工具";
+      const title = opts.titleKeywords.length > 0 ? opts.titleKeywords.join("|") : "微信开发者工具";
       const args = ["-File", scriptPath, "-Mode", opts.scope, "-Title", title, "-OutPath", outPath];
       if (opts.region) {
         args.push(
@@ -128,7 +131,7 @@ export function createWin32Capture(): PlatformCapture {
           return {
             ok: false,
             mode: "windows",
-            error: `no window with title containing "${title}"`,
+            error: `no window with title matching any of: ${title.split("|").join(", ")}`,
             hint: 'Open WeChat devtools and keep its window visible, or use scope="full".',
           };
         }
