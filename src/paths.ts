@@ -3,14 +3,23 @@ import { join } from "node:path";
 
 const DIR_NAME = ".screenshots";
 
-/** 生成 shot-YYYYMMDD-HHmmss-fff.png 形式的文件名 */
+let __seq = 0;
+let __lastStamp = "";
+
+/** 生成 shot-YYYYMMDD-HHmmss-fff[-N].png 形式的文件名，进程内唯一 */
 export function generateFilename(date: Date = new Date()): string {
   const p = (n: number, w: number) => String(n).padStart(w, "0");
   const stamp =
     `${p(date.getFullYear(), 4)}${p(date.getMonth() + 1, 2)}${p(date.getDate(), 2)}` +
     `-${p(date.getHours(), 2)}${p(date.getMinutes(), 2)}${p(date.getSeconds(), 2)}` +
     `-${p(date.getMilliseconds(), 3)}`;
-  return `shot-${stamp}.png`;
+  if (stamp === __lastStamp) {
+    __seq += 1;
+  } else {
+    __lastStamp = stamp;
+    __seq = 0;
+  }
+  return __seq === 0 ? `shot-${stamp}.png` : `shot-${stamp}-${__seq}.png`;
 }
 
 /** 确保 projectRoot/.screenshots 存在，返回其绝对路径 */

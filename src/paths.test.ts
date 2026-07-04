@@ -19,12 +19,13 @@ describe("generateFilename", () => {
     expect(name).toMatch(/^shot-\d{8}-\d{6}-\d{3}\.png$/);
   });
 
-  test("two calls within same ms are still distinct (counter fallback)", () => {
-    const a = generateFilename();
-    const b = generateFilename();
-    // 允许时间戳不同；只要两个都合法
-    expect(a).toMatch(/^shot-\d{8}-\d{6}-\d{3}\.png$/);
-    expect(b).toMatch(/^shot-\d{8}-\d{6}-\d{3}\.png$/);
+  test("two calls with same timestamp are distinct (counter fallback)", () => {
+    const fixed = new Date(2026, 6, 4, 12, 0, 0, 500); // 2026-07-04 12:00:00.500 local
+    const a = generateFilename(fixed);
+    const b = generateFilename(fixed);
+    expect(a).not.toBe(b);
+    expect(a).toBe("shot-20260704-120000-500.png");
+    expect(b).toBe("shot-20260704-120000-500-1.png");
   });
 });
 
@@ -60,5 +61,13 @@ describe("ensureGitignore", () => {
   test("creates .gitignore if it does not exist", () => {
     ensureGitignore(TMP);
     expect(existsSync(join(TMP, ".gitignore"))).toBe(true);
+  });
+
+  test("inserts separator newline when existing file has no trailing newline", () => {
+    writeFileSync(join(TMP, ".gitignore"), "node_modules/"); // no trailing newline
+    ensureGitignore(TMP);
+    const content = readFileSync(join(TMP, ".gitignore"), "utf8");
+    expect(content).toContain("\n.screenshots/");
+    expect(content).toBe("node_modules/\n.screenshots/\n");
   });
 });
