@@ -31,7 +31,7 @@
       "screenshot": {
         "type": "stdio",
         "command": "node",
-        "args": ["C:\\Users\\wzw\\ZCodeProject\\mcp-screenshot\\dist\\index.js"]
+        "args": ["/absolute/path/to/mcp-screenshot/dist/index.js"]
       }
     }
   }
