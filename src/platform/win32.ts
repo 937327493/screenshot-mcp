@@ -1,14 +1,152 @@
-import type { PlatformCapture } from "./types.js";
+import { spawn } from "node:child_process";
+import { writeFileSync, unlinkSync, existsSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import type { PlatformCapture, CaptureOptions, CaptureResult } from "./types.js";
+
+/**
+ * PowerShell 截图脚本。通过 -File 执行，避免命令行转义问题。
+ * 参数：$Mode (window|region|full), $Title, $OutPath, $X, $Y, $W, $H
+ * 输出：一行 JSON 到 stdout：{ ok, width?, height?, error?, found? }
+ */
+const PS_SCRIPT = `
+param([string]\$Mode, [string]\$Title, [string]\$OutPath, [int]\$X, [int]\$Y, [int]\$W, [int]\$H)
+\$ErrorActionPreference = 'Stop'
+Add-Type -AssemblyName System.Drawing,System.Windows.Forms
+Add-Type @"
+using System;
+using System.Runtime.InteropServices;
+public class WinApi {
+  [DllImport("user32.dll")] public static extern bool GetWindowRect(IntPtr h, out RECT r);
+  [StructLayout(LayoutKind.Sequential)]
+  public struct RECT { public int Left; public int Top; public int Right; public int Bottom; }
+}
+"@
+
+function Out-Json(\$obj) { Write-Output (\$obj | ConvertTo-Json -Compress) }
+
+try {
+  \$rect = \$null
+  if (\$Mode -eq 'full') {
+    \$sb = [System.Windows.Forms.Screen]::PrimaryScreen.Bounds
+    \$rect = New-Object System.Drawing.Rectangle(\$sb.X, \$sb.Y, \$sb.Width, \$sb.Height)
+  } elseif (\$Mode -eq 'region') {
+    \$rect = New-Object System.Drawing.Rectangle(\$X, \$Y, \$W, \$H)
+  } else {
+    \$proc = Get-Process -ErrorAction SilentlyContinue |
+      Where-Object { \$_.MainWindowTitle -and \$_.MainWindowTitle.ToLower().Contains(\$Title.ToLower()) } |
+      Select-Object -First 1
+    if (-not \$proc -or \$proc.MainWindowHandle -eq [IntPtr]::Zero) {
+      Out-Json @{ ok=\$false; error='WINDOW_NOT_FOUND' }
+      exit 0
+    }
+    \$r = New-Object WinApi+RECT
+    [void][WinApi]::GetWindowRect(\$proc.MainWindowHandle, [ref]\$r)
+    \$rect = New-Object System.Drawing.Rectangle(\$r.Left, \$r.Top, (\$r.Right - \$r.Left), (\$r.Bottom - \$r.Top))
+  }
+
+  if (\$rect.Width -le 0 -or \$rect.Height -le 0) {
+    Out-Json @{ ok=\$false; error='INVALID_RECT'; width=\$rect.Width; height=\$rect.Height }
+    exit 0
+  }
+
+  \$bmp = New-Object System.Drawing.Bitmap(\$rect.Width, \$rect.Height)
+  \$g = [System.Drawing.Graphics]::FromImage(\$bmp)
+  \$g.CopyFromScreen(\$rect.X, \$rect.Y, 0, 0, \$bmp.Size)
+  \$bmp.Save(\$OutPath, [System.Drawing.Imaging.ImageFormat]::Png)
+  \$g.Dispose(); \$bmp.Dispose()
+
+  \$warning = \$null
+  if (\$rect.Width -lt 50 -or \$rect.Height -lt 50) { \$warning = 'captured area is very small; window may be minimized or occluded' }
+  Out-Json @{ ok=\$true; width=\$rect.Width; height=\$rect.Height; warning=\$warning }
+} catch {
+  Out-Json @{ ok=\$false; error=\$_.Exception.Message }
+}
+`;
+
+function runPowerShell(
+  args: string[]
+): Promise<{ stdout: string; stderr: string; code: number | null }> {
+  return new Promise((resolve) => {
+    const child = spawn(
+      "powershell.exe",
+      ["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", ...args],
+      { windowsHide: true }
+    );
+    let stdout = "";
+    let stderr = "";
+    child.stdout.on("data", (d) => (stdout += d.toString()));
+    child.stderr.on("data", (d) => (stderr += d.toString()));
+    child.on("close", (code) => resolve({ stdout, stderr, code }));
+    child.on("error", () =>
+      resolve({ stdout, stderr: "failed to spawn powershell.exe", code: -1 })
+    );
+  });
+}
 
 export function createWin32Capture(): PlatformCapture {
   return {
     mode: "windows",
-    async capture() {
+    async capture(opts: CaptureOptions, outPath: string): Promise<CaptureResult> {
+      const scriptPath = join(tmpdir(), `mcp-screenshot-${Date.now()}.ps1`);
+      writeFileSync(scriptPath, PS_SCRIPT, "utf8");
+
+      const title = opts.titleKeywords[0] ?? "微信开发者工具";
+      const args = ["-File", scriptPath, "-Mode", opts.scope, "-Title", title, "-OutPath", outPath];
+      if (opts.region) {
+        args.push(
+          "-X", String(opts.region.x),
+          "-Y", String(opts.region.y),
+          "-W", String(opts.region.w),
+          "-H", String(opts.region.h)
+        );
+      }
+
+      const { stdout, code } = await runPowerShell(args);
+
+      try {
+        if (existsSync(scriptPath)) unlinkSync(scriptPath);
+      } catch {
+        /* ignore */
+      }
+
+      let parsed: { ok?: boolean; width?: number; height?: number; error?: string; warning?: string } = {};
+      try {
+        const lines = stdout.trim().split(/\r?\n/).filter(Boolean);
+        parsed = JSON.parse(lines[lines.length - 1]);
+      } catch {
+        return {
+          ok: false,
+          mode: "windows",
+          error: `failed to parse powershell output (code=${code}): ${stdout.slice(0, 200)}`,
+          hint: "Try scope=full as a fallback, or check that powershell.exe is available.",
+        };
+      }
+
+      if (!parsed.ok) {
+        if (parsed.error === "WINDOW_NOT_FOUND") {
+          return {
+            ok: false,
+            mode: "windows",
+            error: `no window with title containing "${title}"`,
+            hint: 'Open WeChat devtools and keep its window visible, or use scope="full".',
+          };
+        }
+        return {
+          ok: false,
+          mode: "windows",
+          error: parsed.error ?? `unknown error (code=${code})`,
+          hint: 'Try scope="full" as a fallback.',
+        };
+      }
+
       return {
-        ok: false,
+        ok: true,
         mode: "windows",
-        error: "not implemented yet",
-        hint: "win32 capture will be implemented in Task 5",
+        path: outPath,
+        width: parsed.width ?? 0,
+        height: parsed.height ?? 0,
+        warning: parsed.warning ?? undefined,
       };
     },
   };
