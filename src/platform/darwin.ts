@@ -48,7 +48,15 @@ export function createDarwinCapture(): PlatformCapture {
 
       if (opts.scope === "full") {
         args = ["-x", outPath]; // -x 静音（不发声）
-      } else if (opts.scope === "region" && opts.region) {
+      } else if (opts.scope === "region") {
+        if (!opts.region) {
+          return {
+            ok: false,
+            mode: "darwin",
+            error: "scope=region requires region coordinates",
+            hint: 'Provide region "x,y,w,h", or use scope="window"/"full".',
+          };
+        }
         const { x, y, w, h } = opts.region;
         args = ["-x", "-R", `${x},${y},${w},${h}`, outPath];
       } else {
@@ -63,7 +71,8 @@ export function createDarwinCapture(): PlatformCapture {
             hint: 'Open WeChat devtools, or use scope="full".',
           };
         }
-        args = ["-x", "-l", String(wid), outPath];
+        // -l 的窗口 ID 必须紧跟 flag（-l1234），不能分开，否则 screencapture 抓错目标
+        args = ["-x", `-l${wid}`, outPath];
       }
 
       const { code, stderr } = await run("screencapture", args);
