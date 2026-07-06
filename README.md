@@ -20,6 +20,39 @@
 
 成功返回本地 PNG 绝对路径，agent 用 Read 工具读取该路径即可看到画面。失败返回结构化错误 + 可读的 hint（例如建议改用 `scope=full` 兜底）。
 
+### 只截模拟器区域
+
+`scope=window` 默认截整个开发者工具窗口（含目录树、调试器）。如果你只想要模拟器（手机预览）那一块画面，加参数 `simulator=true`：
+
+```
+screenshot_capture { scope: "window", simulator: true }
+```
+
+模拟器在窗口内的位置由环境变量 `SIMULATOR_RECT` 配置，格式 `"x1,x2,y1,y2"` 四个百分比整数（0-100），分别表示模拟器在窗口 bounds 内的**左、右、顶、底**边界：
+
+```json
+{
+  "mcp": {
+    "servers": {
+      "screenshot": {
+        "type": "stdio",
+        "command": "node",
+        "args": ["/absolute/path/to/mcp-screenshot/dist/index.js"],
+        "env": {
+          "SIMULATOR_RECT": "50,64,7,99"
+        }
+      }
+    }
+  }
+}
+```
+
+含义：模拟器位于窗口左 50% 到右 64%、顶 7% 到底 99% 的矩形区域。运行时会按当前窗口实际尺寸换算成屏幕坐标，所以**窗口移动、换屏幕、调整 ZCode 窗口大小都不影响**，只要开发者工具内部布局（目录树/模拟器/调试器的比例）不变。
+
+**怎么量出适合自己的百分比**：先用 `scope=window` 截一张完整窗口图，目测模拟器四条边在窗口里的百分比位置（左边占窗口宽的百分之几、右边到百分之几、顶部从百分之几开始、底部到百分之几），填进 `SIMULATOR_RECT`。配一次长期用，开发者工具布局没大改就不用动。
+
+> 注意：`simulator=true` 仅在 `scope=window` 时有意义（需要先定位窗口，再裁子区域）。不配 `SIMULATOR_RECT` 就调用 `simulator=true` 会返回明确错误提示。
+
 ## 接入 ZCode
 
 在项目工作区 `.zcode/config.json`（配置文件不展开 `${...}` 模板变量，必须用绝对路径）：

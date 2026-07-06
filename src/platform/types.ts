@@ -13,6 +13,12 @@ export interface CaptureOptions {
   titleKeywords: string[];
   /** 仅 scope=region 时使用 */
   region?: Region;
+  /**
+   * 仅 simulator 模式：模拟器在目标窗口 bounds 内的相对百分比。
+   * x1/x2 是左右边界百分比，y1/y2 是上下边界百分比（0-100）。
+   * 由环境变量 SIMULATOR_RECT 解析而来，仅在 scope=window 时应用。
+   */
+  simulatorRect?: { x1: number; x2: number; y1: number; y2: number };
 }
 
 export interface CaptureSuccess {

@@ -10,7 +10,7 @@ import type { PlatformCapture, CaptureOptions, CaptureResult } from "./types.js"
  * 输出：一行 JSON 到 stdout：{ ok, width?, height?, error?, found? }
  */
 const PS_SCRIPT = `
-param([string]$Mode, [string]$Title, [string]$OutPath, [int]$X, [int]$Y, [int]$W, [int]$H)
+param([string]$Mode, [string]$Title, [string]$OutPath, [int]$X, [int]$Y, [int]$W, [int]$H, [int]$SimX1, [int]$SimX2, [int]$SimY1, [int]$SimY2)
 $ErrorActionPreference = 'Stop'
 Add-Type -AssemblyName System.Drawing,System.Windows.Forms
 Add-Type @"
@@ -45,6 +45,14 @@ try {
     $r = New-Object WinApi+RECT
     [void][WinApi]::GetWindowRect($proc.MainWindowHandle, [ref]$r)
     $rect = New-Object System.Drawing.Rectangle($r.Left, $r.Top, ($r.Right - $r.Left), ($r.Bottom - $r.Top))
+    # simulator 模式：按百分比把窗口 rect 收窄成模拟器子区域
+    if ($SimX2 -gt $SimX1 -and $SimY2 -gt $SimY1) {
+      $nx = $rect.X + [int]($rect.Width * $SimX1 / 100)
+      $ny = $rect.Y + [int]($rect.Height * $SimY1 / 100)
+      $nw = [int]($rect.Width * ($SimX2 - $SimX1) / 100)
+      $nh = [int]($rect.Height * ($SimY2 - $SimY1) / 100)
+      $rect = New-Object System.Drawing.Rectangle($nx, $ny, $nw, $nh)
+    }
   }
 
   if ($rect.Width -le 0 -or $rect.Height -le 0) {
@@ -102,6 +110,15 @@ export function createWin32Capture(): PlatformCapture {
           "-Y", String(opts.region.y),
           "-W", String(opts.region.w),
           "-H", String(opts.region.h)
+        );
+      }
+      // simulator 模式：传 4 个百分比给 PS，由 PS 在拿到窗口 rect 后收窄
+      if (opts.simulatorRect) {
+        args.push(
+          "-SimX1", String(opts.simulatorRect.x1),
+          "-SimX2", String(opts.simulatorRect.x2),
+          "-SimY1", String(opts.simulatorRect.y1),
+          "-SimY2", String(opts.simulatorRect.y2)
         );
       }
 

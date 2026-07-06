@@ -122,6 +122,18 @@ export function createDarwinCapture(): PlatformCapture {
           };
         }
         region = bounds;
+
+        // simulator 模式：把整个窗口 bounds 按百分比收窄成模拟器子区域。
+        // bounds 是全局屏幕坐标，simulatorRect 是窗口内的相对百分比。
+        if (opts.simulatorRect) {
+          const { x1, x2, y1, y2 } = opts.simulatorRect;
+          region = {
+            x: bounds.x + Math.round(bounds.w * x1 / 100),
+            y: bounds.y + Math.round(bounds.h * y1 / 100),
+            w: Math.round(bounds.w * (x2 - x1) / 100),
+            h: Math.round(bounds.h * (y2 - y1) / 100),
+          };
+        }
       }
 
       // region / window 两种模式都走 -R 按坐标截（绕开屏幕录制权限 + 支持负坐标外接屏）
